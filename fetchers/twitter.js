@@ -1,7 +1,6 @@
 // Load the http module to create an http server.
 var http = require('http');
 var OAuth = require('oauth').OAuth;
-var Memcached = require('memcached');
 var winston = require('winston');
 
 //General
@@ -9,7 +8,9 @@ var args = process.argv;
 if(args.length < 3){ 
   process.exit(1); 
 }
+var service = "twitter"
 var query = args.pop();
+var key = service+"-"+query;
 var retries = 3;
 
 //Logger
@@ -26,8 +27,8 @@ var server_location = "localhost:11211";
 var options = { "retries": 5, "retry":10000 };
 var one_day = 86400;
 
-Memcached.config.poolSize = pool_size;
-var memcached = new Memcached(server_location, options);
+var redis = require("redis");
+var redis_client = redis.createClient(process.env.REDIS_PORT, process.env.REDIS_HOST);
 
 //OAuth
 var access_token = '631605123-CN1B04oSRuvNUKkSr5ezrYFqIHgWr3e9A4lC2gyn';
@@ -46,25 +47,27 @@ var fetchTweets = function(query, number){
   oa.get("https://api.twitter.com/1.1/statuses/user_timeline.json?screen_name="+query+"&count="+count,access_token,access_token_secret, 
     function (error, data) {
       if(error){
-        logger.warn("Fetching Twitter user timeline for "+query+" failed. Error: "+error+", retry: "+number);
+        logger.warn("Fetching Twitter user timeline for "+key+" failed. Error: "+error+", retry: "+number);
         if(number < retries){
+	        logger.warn("Refetching Twitter user timeline for "+key);
           fetchTweets(query, number+1);
         } else {
-          logger.error("Could not fetch Twitter user timeline for query: "+query);
+          logger.error("Could not fetch Twitter user timeline for key: "+key);
           process.exit(0);
         }
       } else {
-        memcached.set(query,data,one_day,function(err){
+        redis_client.set(key,data,function(err,reply){
           if(err){
-            logger.warn("Memcached set error for query: "+query+", retry: "+number);
+            logger.warn("Redis set error for key: "+key+", retry: "+number);
             if(number < retries){
-              fetchTweets(query, number+1);
+							logger.warn("Refetching Twitter user timeline for "+key);
+              fetchTweets(key, number+1);
             } else {
-              logger.error("Could not set memcached key for query: "+query);
+              logger.error("Could not set redis key for key: "+key);
               process.exit(1);
             }
           } else {
-            logger.info("Memcached key: twitter-"+query+" set successfully, exiting process");
+            logger.info("Redis key: "+key+" set successfully, exiting process");
             process.exit(0);
           }
         });
